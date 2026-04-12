@@ -1,0 +1,395 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{setspace}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage{microtype}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue,
+  citecolor=black,
+  pdftitle={EE6483 Mini Project Report - Dogs vs. Cats and CIFAR-10},
+  pdfauthor={To be completed}
+}
+
+\setstretch{1.15}
+\graphicspath{{runs/project_pipeline/report_artifacts/figures/}}
+\captionsetup{font=small, labelfont=bf}
+\setlist[itemize]{topsep=2pt, itemsep=2pt, parsep=0pt}
+\setlist[enumerate]{topsep=2pt, itemsep=2pt, parsep=0pt}
+\setlength{\emergencystretch}{2em}
+
+\title{\textbf{EE6483 Artificial Intelligence and Data Mining}\\Mini Project (Option 2) Report\\[0.4em]\large Dogs vs.\ Cats Image Classification and CIFAR-10 Extension}
+\author{Group Members: To be completed}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{center}
+\begin{tabularx}{0.95\textwidth}{>{\raggedright\arraybackslash}p{0.24\textwidth}X}
+\textbf{Contribution Statement:} & To be completed. \\
+\textbf{Code Directory:} & \texttt{/usr1/home/s125mdg56\_02/mrc/cat\_vs\_dog} \\
+\textbf{Primary Runtime:} & Single NVIDIA RTX A5000 24GB GPU, CUDA, PyTorch 2.5.1+cu121 \\
+\end{tabularx}
+\end{center}
+
+\begin{abstract}
+This report addresses the requirements of the EE6483 Mini Project (Option 2) by studying binary image classification on the Dogs vs.\ Cats dataset and extending the developed pipeline to the multi-class CIFAR-10 dataset under both balanced and imbalanced settings. For Dogs vs.\ Cats, three reproducible experiments were conducted: ResNet18 with ImageNet pretraining and data augmentation, ResNet18 with ImageNet pretraining and no training augmentation, and a custom SmallCNN with data augmentation. On a single NVIDIA RTX A5000 24GB GPU, the best configuration, namely pretrained ResNet18 with augmentation, achieved 98.52\% validation accuracy and was used to generate the required \texttt{submission.csv} file. For CIFAR-10, the same framework was extended to a 10-class classification problem and further adapted to a long-tail class-imbalance setting. Three imbalance handling strategies were evaluated: class-weighted cross entropy, weighted sampling, and focal loss. The balanced CIFAR-10 baseline reached 91.24\% test accuracy, whereas long-tail training reduced the best test accuracy to 82.67\% under both class weighting and weighted sampling. The results demonstrate that transfer learning and data augmentation are highly beneficial for the binary task, while class imbalance substantially degrades performance in the multi-class setting. The report further analyzes confusion patterns and representative correctly and incorrectly classified examples, and concludes with a discussion of the strengths, limitations, and possible improvements of the proposed approach.
+\end{abstract}
+
+\section{Literature Survey}
+
+\subsection{Problem Definition}
+The primary task in this project is supervised image classification. Given an input RGB image, the model must predict a discrete semantic label. For Dogs vs.\ Cats, this is a binary closed-set classification problem with label space $\{ \texttt{cat}, \texttt{dog} \}$. For the CIFAR-10 extension, the label space expands to ten mutually exclusive categories. Under the project setting, both tasks are standard supervised closed-set recognition problems. Nevertheless, the broader literature distinguishes several related settings, including supervised versus unsupervised or self-supervised learning, closed-set versus open-set recognition, and in-domain testing versus domain-shifted evaluation. Although the present project focuses on the standard in-domain supervised setting, these broader distinctions are important for motivating the selection of robust and transferable methods.
+
+\subsection{Main Challenges}
+Despite being visually simple for humans, animal image classification remains non-trivial for machine learning models. Several challenges are especially relevant here:
+\begin{enumerate}
+  \item \textbf{Large intra-class variation.} Cats and dogs vary substantially in breed, fur color, facial structure, and body size.
+  \item \textbf{High inter-class similarity.} Some dog breeds and cat breeds share similar textures, silhouettes, or local facial viewpoints.
+  \item \textbf{Background bias.} A model may rely on furniture, grass, blankets, or indoor scene context instead of the actual animal.
+  \item \textbf{Pose, scale, and occlusion variation.} Side views, partial crops, blur, and clutter can reduce classification reliability.
+  \item \textbf{Class imbalance.} The CIFAR-10 extension explicitly introduces a long-tail training distribution, which weakens minority-class learning.
+\end{enumerate}
+
+\subsection{Common Solution Types Under Different Settings}
+The image classification literature contains several broad categories of methods. Traditional pipelines rely on handcrafted descriptors such as SIFT or HOG followed by conventional classifiers such as SVM. These methods are computationally efficient but limited in representational power. Modern deep learning approaches are dominated by convolutional neural networks (CNNs), including AlexNet, VGG, ResNet, DenseNet, and EfficientNet, which learn hierarchical features directly from raw pixels. More recently, transformer-based architectures such as Vision Transformer and Swin Transformer have become highly competitive, particularly when trained on large-scale data.
+
+In transfer learning settings, pretrained backbones are especially attractive because they often provide strong performance on medium-scale datasets without requiring massive computational budgets. In self-supervised or large-scale multimodal pretraining settings, models such as MAE and CLIP further improve feature generalization. For imbalanced classification, typical strategies include reweighting, resampling, focal loss, class-balanced loss, and multi-stage training. In open-set or domain-shift settings, additional mechanisms such as uncertainty estimation, out-of-distribution detection, or domain adaptation may be required.
+
+\subsection{Influential and Representative Works}
+Several prior works are particularly relevant to this project. VGGNet demonstrated that deeper networks with small convolution kernels can achieve strong image recognition performance. ResNet introduced residual learning, which greatly improved the trainability of deep CNNs and remains one of the most widely used backbones in image classification. EfficientNet proposed compound scaling to better balance depth, width, and resolution. Vision Transformer extended transformer architectures to image classification and showed that attention-based models can become highly competitive under large-scale pretraining. ConvNeXt revisited pure convolutional designs using modern training recipes and showed that CNNs remain powerful under contemporary optimization settings. In addition, Focal Loss has become a standard method for handling hard examples and imbalanced training distributions.
+
+\subsection{Selected Works and Detailed Review}
+\paragraph{ResNet for Transfer Learning.}
+The key innovation of ResNet is the residual connection, which reformulates deep feature learning from directly fitting a target mapping to learning a residual function. This design alleviates optimization difficulty and enables stable training of deep networks. For the present project, ResNet18 is particularly suitable because it offers an excellent balance between representational power, training speed, and memory usage. Its ImageNet-pretrained weights provide rich generic visual features that transfer effectively to natural image classification tasks such as Dogs vs.\ Cats.
+
+\paragraph{Modern Large-Scale Pretraining.}
+Recent models such as ViT, MAE, and CLIP show that large-scale pretraining can produce highly transferable visual representations. However, such models usually require higher computational cost, more careful hyperparameter tuning, and larger-scale infrastructure. Since the present project emphasizes reproducibility, interpretability, and comparative analysis under a practical single-GPU budget, a pretrained ResNet18 provides a more appropriate and defensible baseline than a heavier or more complex architecture.
+
+\subsection{Baseline Choice and Motivation}
+Based on the above survey, this project adopts \textbf{ResNet18 with ImageNet pretraining and a task-specific linear classifier} as the main baseline for Dogs vs.\ Cats. This choice is well aligned with the project requirement that encourages the use of pretrained feature extraction backbones such as VGG or ResNet. It is also well motivated from a practical perspective: transfer learning is more stable than training from scratch on medium-scale datasets, the model is lightweight enough for multiple comparative experiments on a single RTX A5000 GPU, and the same general design can be naturally adapted to CIFAR-10 by modifying the input stem and classification head.
+
+\section{Data Usage, Pre-processing, and Augmentation}
+
+\subsection{Dogs vs.\ Cats Dataset Usage}
+The provided Dogs vs.\ Cats dataset is organized into training, validation, and testing folders. The original training set contains 20{,}000 images in total, with 10{,}000 cat images and 10{,}000 dog images. The validation set contains 5{,}000 images in total, evenly split between the two classes. The testing set contains 500 unlabeled images for final prediction.
+
+Considering that the automated pipeline must run multiple comparative experiments while still producing statistically reliable results, the default project configuration on a single RTX A5000 uses 16{,}000 training images and the full 5{,}000-image validation set. With fixed random seed 42, the selected training subset contains approximately 8{,}005 cat images and 7{,}995 dog images. The validation set remains perfectly balanced with 2{,}500 cat images and 2{,}500 dog images. The full 500-image testing set is used to generate the final \texttt{submission.csv} file.
+
+\subsection{CIFAR-10 Dataset Usage}
+CIFAR-10 contains 50{,}000 training images and 10{,}000 testing images across ten classes. In this project, the original training set is split into 45{,}000 training images and 5{,}000 validation images for the balanced baseline. For the long-tail imbalance experiment, the balanced training split is converted into a long-tail subset with imbalance ratio 0.1, resulting in a final training size of 18{,}260 images.
+
+\subsection{Pre-processing}
+For Dogs vs.\ Cats, all images are resized to $224 \times 224$ pixels and normalized using the standard ImageNet mean and standard deviation. During validation and testing, only deterministic resizing and normalization are applied. For CIFAR-10, the native input resolution $32 \times 32$ is preserved and the images are normalized using the standard CIFAR-10 channel statistics.
+
+\subsection{Data Augmentation}
+Dogs vs.\ Cats training augmentation includes image resizing, random resized cropping, horizontal flipping, small-angle rotation, and color jitter. CIFAR-10 training augmentation includes random cropping with padding and horizontal flipping. The purpose of these augmentation strategies is to improve robustness against changes in scale, pose, viewpoint, and low-level appearance, while also reducing overfitting. The project explicitly compares the effect of training augmentation by contrasting pretrained ResNet18 with and without augmentation.
+
+\section{Model Design and Training Strategy}
+
+\subsection{Dogs vs.\ Cats Models}
+Two model families were studied on Dogs vs.\ Cats. The first is a pretrained ResNet18 backbone followed by a linear classifier with output dimension 2. The input shape is $3 \times 224 \times 224$, and the final fully connected layer maps the backbone feature dimension 512 to the binary label space. The second is a custom SmallCNN composed of four convolutional stages followed by adaptive average pooling and a two-layer classifier head, again producing two output logits.
+
+The pretrained ResNet18 serves as the main project baseline because it directly satisfies the project recommendation of using a pretrained CNN backbone. The SmallCNN serves as a lighter from-scratch comparison model, enabling a direct study of model capacity and the importance of transfer learning.
+
+\subsection{CIFAR-10 Model}
+For CIFAR-10, ResNet18 is adapted for small images by replacing the original $7\times7$ stride-2 stem with a $3\times3$ stride-1 convolution and removing the initial max-pooling layer. The final classifier is changed from two outputs to ten outputs. This design retains the advantages of residual learning while matching the much lower resolution of CIFAR-10 images.
+
+\subsection{Loss Functions}
+Standard cross-entropy loss is used for Dogs vs.\ Cats and for the balanced CIFAR-10 baseline. For the CIFAR-10 imbalance setting, three alternatives are considered: class-weighted cross entropy, weighted sampling with standard cross entropy, and focal loss with class-dependent weighting. To avoid mixed-precision type conflicts, loss computation is explicitly performed in \texttt{float32} even when automatic mixed precision is enabled during the model forward pass.
+
+\subsection{Optimization and Runtime Strategy}
+All experiments use AdamW with learning rate $10^{-3}$, weight decay $10^{-4}$, and cosine annealing learning-rate scheduling. Early stopping patience is set to 3 epochs for Dogs vs.\ Cats and 5 epochs for CIFAR-10. The entire pipeline runs on a single NVIDIA RTX A5000 24GB GPU with mixed precision, \texttt{channels\_last} memory format, persistent workers, pinned memory, and eight data-loading workers. The random seed is fixed at 42 for reproducibility, and all key arguments are saved to metadata files.
+
+\section{Parameter Selection and Rationale}
+
+\subsection{Why 10 Epochs for Dogs vs.\ Cats?}
+The default maximum number of epochs for Dogs vs.\ Cats is 10. This choice is not claimed to be globally optimal; rather, it reflects a practical compromise between performance, runtime, and the need to conduct multiple comparative experiments. Since the main model is a pretrained ResNet18, convergence is fast. In the present experiments, the model already reaches 98.52\% validation accuracy within 10 epochs. Increasing the epoch budget would likely produce only marginal gains relative to the additional computational cost, especially because the project requires multiple model and data-processing comparisons rather than a single heavily tuned run.
+
+\subsection{Why 20 Epochs for CIFAR-10?}
+CIFAR-10 is more challenging in terms of class cardinality, and the model is not initialized from ImageNet-pretrained small-image weights. Therefore, a larger training budget is justified. In the current configuration, 20 epochs are sufficient to produce a strong balanced baseline at 91.24\% test accuracy and to expose meaningful differences among imbalance handling methods.
+
+\subsection{Why ResNet18 Instead of a Larger Architecture?}
+Larger backbones such as ResNet50, EfficientNet variants, or transformer-based models may improve the upper performance bound, but they also increase training cost and complicate broad experimentation. Since this project values reproducible comparisons across multiple settings, ResNet18 is a well-balanced choice: it is strong enough to achieve high accuracy, yet light enough to support a complete comparative study on a single GPU.
+
+\subsection{Why These Imbalance Methods?}
+The chosen imbalance strategies represent three major paradigms. Class weighting modifies the optimization objective directly. Weighted sampling modifies the effective mini-batch data distribution. Focal loss changes the sample-wise contribution by down-weighting easy examples and emphasizing hard examples. Together, they provide a meaningful comparative study of at least two imbalance handling approaches, as required by the project.
+
+\section{Experimental Results on Dogs vs.\ Cats}
+
+\subsection{Quantitative Results}
+Table~\ref{tab:dogs_results} summarizes the validation performance of the three Dogs vs.\ Cats experiments.
+
+\begin{table}[H]
+\centering
+\caption{Validation performance on Dogs vs.\ Cats.}
+\label{tab:dogs_results}
+\resizebox{\textwidth}{!}{%
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{0.34\textwidth}cccccc}
+\toprule
+Experiment & Model & Pretrained & Aug. & Train & Val & Best Val Acc. \\
+\midrule
+dogs\_resnet18\_pretrained\_aug & ResNet18 & Yes & Yes & 16000 & 5000 & \textbf{98.52\%} \\
+dogs\_resnet18\_pretrained\_noaug & ResNet18 & Yes & No & 16000 & 5000 & 98.00\% \\
+dogs\_smallcnn\_aug & SmallCNN & No & Yes & 16000 & 5000 & 81.92\% \\
+\bottomrule
+\end{tabularx}
+}
+\end{table}
+
+Three conclusions are immediate. First, the pretrained ResNet18 with augmentation is the strongest model and is therefore selected as the final Dogs vs.\ Cats classifier. Second, under the same ResNet18 backbone, adding training augmentation improves validation accuracy from 98.00\% to 98.52\%, demonstrating a stable gain in generalization. Third, the gap between the pretrained ResNet18 and the from-scratch SmallCNN is large (16.60 percentage points), showing the importance of transfer learning for this task.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{dogs_training_curves.png}
+\caption{Training and validation curves for Dogs vs.\ Cats under different models and augmentation settings.}
+\label{fig:dogs_curves}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{dogs_model_comparison.png}
+\caption{Best validation accuracy comparison across the Dogs vs.\ Cats experiments.}
+\label{fig:dogs_comp}
+\end{figure}
+
+\subsection{Validation Accuracy and Test Submission}
+The best Dogs vs.\ Cats experiment is \texttt{dogs\_resnet18\_pretrained\_aug}, which achieved 98.52\% validation accuracy at epoch 10. The final test-set prediction file has been generated as \texttt{runs/project\_pipeline/submission.csv}, with the required two-column format \texttt{ID,label} where \texttt{1 = dog} and \texttt{0 = cat}. This directly satisfies the project requirement for test-set submission.
+
+\subsection{Confusion Matrix Analysis}
+Since the Dogs vs.\ Cats test set is unlabeled, error analysis must be conducted on the validation set rather than the hidden test split. The confusion statistics of the best model on the validation set are:
+\begin{itemize}
+  \item True cat predicted as cat: 2465
+  \item True cat predicted as dog: 35
+  \item True dog predicted as dog: 2462
+  \item True dog predicted as cat: 38
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.58\textwidth]{dogs_confusion_matrix.png}
+\caption{Confusion matrix of the best Dogs vs.\ Cats model on the validation set.}
+\label{fig:dogs_cm}
+\end{figure}
+
+The confusion matrix indicates that the model is highly balanced across the two classes. The number of cats mistaken for dogs and dogs mistaken for cats is both very small, suggesting that the classifier does not exhibit a strong class bias.
+
+\subsection{Analysis of Correctly and Incorrectly Classified Samples}
+The project requires discussion of correctly and incorrectly classified cases. As noted above, such analysis is performed on the labeled validation set. In total, the best model correctly classifies 4{,}927 of 5{,}000 validation images and misclassifies only 73 images.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{dogs_case_gallery.png}
+\caption{High-confidence correct and incorrect validation cases for Dogs vs.\ Cats.}
+\label{fig:dogs_gallery}
+\end{figure}
+
+Two representative correctly classified cases illustrate the strength of the model. In one case, \texttt{cat.100.jpg} contains a centered kitten with clear facial structure, distinct ears, and a simple background; the model predicts the correct class with essentially perfect confidence. In another case, \texttt{dog.10029.jpg} shows a dog face with strong local texture, visible ears, and little background clutter; again, the prediction is correct with confidence close to 1.0. These examples show that the classifier is very reliable when the animal occupies a sufficiently large image region and its characteristic features are clearly visible.
+
+Two representative incorrect cases reveal the model's weakness. The sample \texttt{dog.9109.jpg} is a dog lying on a patterned sofa, yet it is predicted as a cat with confidence above 0.995. The dog face occupies a relatively small region and the overall texture is compact, which may encourage the model to rely on global appearance rather than species-specific facial cues. Another sample, \texttt{cat.7323.jpg}, is a close-up cat image with unusual pose, low effective resolution, and strong local contrast; it is incorrectly predicted as a dog with confidence above 0.996. This suggests that the current model remains vulnerable to atypical viewpoints, localized crops, and ambiguous texture patterns.
+
+\subsection{Strengths, Weaknesses, and the Effect of Model Choice and Data Processing}
+The best model is strong in standard natural-image scenarios where the animal is centered, sufficiently large, and captured under relatively clean lighting conditions. Its main weaknesses arise when visual cues are incomplete, occluded, or confounded by background and pose. Regarding data processing, the comparison between the two pretrained ResNet18 variants shows that augmentation provides a measurable benefit and reduces overfitting. Regarding model choice, the comparison between pretrained ResNet18 and SmallCNN clearly demonstrates that a stronger pretrained backbone is far more effective than a small network trained from scratch. These experiments directly answer the project requirement on how different model choices and data processing strategies affect validation performance.
+
+\section{CIFAR-10 Multi-class Classification}
+
+\subsection{Dataset and Problem Description}
+CIFAR-10 is a ten-class image classification benchmark containing the categories airplane, automobile, bird, cat, deer, dog, frog, horse, ship, and truck. Compared with Dogs vs.\ Cats, this task differs in three important respects: it is multi-class rather than binary, the images are much smaller ($32\times32$), and class imbalance is later introduced explicitly in the long-tail setting.
+
+\subsection{Modifications Relative to Dogs vs.\ Cats}
+To adapt the algorithm from Dogs vs.\ Cats to CIFAR-10, several modifications are made. The classifier head is changed from 2 outputs to 10 outputs. The ResNet18 stem is modified for small images by using a $3\times3$ stride-1 convolution and removing initial max pooling. The augmentation policy is simplified to random crop and horizontal flip, which is standard for CIFAR-10. The training budget is increased to 20 epochs to account for the higher task complexity.
+
+\subsection{Balanced CIFAR-10 Baseline}
+\begin{table}[H]
+\centering
+\caption{Balanced CIFAR-10 baseline performance.}
+\label{tab:cifar_balanced}
+\begin{tabular}{lccccc}
+\toprule
+Experiment & Train & Val & Test & Best Val Acc. & Final Test Acc. \\
+\midrule
+cifar10\_baseline & 45000 & 5000 & 10000 & 92.24\% & \textbf{91.24\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The balanced CIFAR-10 baseline demonstrates that the adapted ResNet18 is a strong classifier for this dataset. The model reaches 97.38\% training accuracy by the end of training, together with 92.24\% validation accuracy and 91.24\% test accuracy, indicating a good balance between fitting capacity and generalization.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{cifar10_training_curves.png}
+\caption{Validation and test accuracy curves for the balanced and imbalanced CIFAR-10 experiments.}
+\label{fig:cifar_curves}
+\end{figure}
+
+\section{CIFAR-10 with Class Imbalance}
+
+\subsection{Long-tail Setting}
+To address the project requirement on data imbalance, the CIFAR-10 training set is transformed into a long-tail distribution with imbalance ratio 0.1. The resulting class counts are shown in Table~\ref{tab:longtail_counts}.
+
+\begin{table}[H]
+\centering
+\caption{Class distribution in the long-tail CIFAR-10 training split.}
+\label{tab:longtail_counts}
+\begin{tabular}{cc}
+\toprule
+Class ID & Number of Training Images \\
+\midrule
+0 & 4468 \\
+1 & 3459 \\
+2 & 2678 \\
+3 & 2074 \\
+4 & 1606 \\
+5 & 1243 \\
+6 & 963 \\
+7 & 745 \\
+8 & 577 \\
+9 & 447 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{cifar10_class_distribution.png}
+\caption{Comparison between the balanced CIFAR-10 training split and the constructed long-tail split.}
+\label{fig:cifar_dist}
+\end{figure}
+
+\subsection{Methods Used to Address Class Imbalance}
+Three methods were implemented. First, \textbf{class-weighted cross entropy} increases the contribution of minority classes in the loss function. Second, \textbf{weighted sampling} increases the probability that minority-class samples appear in mini-batches. Third, \textbf{focal loss} down-weights easy examples and focuses learning on hard cases. The first two approaches directly satisfy the project requirement to justify at least two methods for handling class imbalance.
+
+\subsection{Quantitative Results}
+\begin{table}[H]
+\centering
+\caption{CIFAR-10 results under balanced and long-tail settings.}
+\label{tab:cifar_imbalance}
+\resizebox{\textwidth}{!}{%
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{0.36\textwidth}ccccc}
+\toprule
+Experiment & Imbalance & Method & Train Size & Best Val Acc. & Final Test Acc. \\
+\midrule
+cifar10\_baseline & None & None & 45000 & 92.24\% & 91.24\% \\
+cifar10\_imbalance\_class\_weight & Long-tail & Class Weight & 18260 & \textbf{82.74\%} & \textbf{82.67\%} \\
+cifar10\_imbalance\_weighted\_sampler & Long-tail & Weighted Sampler & 18260 & \textbf{82.74\%} & \textbf{82.67\%} \\
+cifar10\_imbalance\_focal\_loss & Long-tail & Focal Loss & 18260 & 81.46\% & 81.40\% \\
+\bottomrule
+\end{tabularx}
+}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{cifar10_experiment_comparison.png}
+\caption{Validation and test performance comparison across the balanced and long-tail CIFAR-10 experiments.}
+\label{fig:cifar_comp}
+\end{figure}
+
+The results show that class imbalance causes a large drop in accuracy compared with the balanced baseline. The balanced model reaches 91.24\% test accuracy, whereas the best long-tail methods reach only 82.67\%. Thus, long-tail imbalance leads to a degradation of approximately 8.57 percentage points in test accuracy. In the current setting, class weighting and weighted sampling perform equally well, while focal loss is slightly worse. The weighted-sampling method yields a higher final training accuracy than class weighting, but it does not improve the final validation or test performance, suggesting that stronger fitting on the resampled training set does not necessarily translate into better generalization.
+
+\subsection{Discussion of the Two Required Imbalance Solutions}
+\textbf{Class weighting} addresses imbalance by increasing the optimization penalty for mistakes on minority classes. This is simple to implement and directly modifies the objective function. \textbf{Weighted sampling} addresses imbalance by changing the effective training distribution seen in each batch, ensuring that tail classes are observed more frequently. In the present experiments, both methods substantially outperform the focal-loss alternative under the same long-tail split, and they therefore provide two effective and well-justified approaches to the imbalance problem.
+
+\section{Discussion}
+Several broader conclusions can be drawn from the experiments. First, transfer learning is extremely effective for medium-scale natural image classification, as shown by the large gap between pretrained ResNet18 and the custom SmallCNN on Dogs vs.\ Cats. Second, data augmentation provides a stable improvement even when the model is already strong, and it appears to improve generalization by reducing the gap between training and validation performance. Third, class imbalance significantly harms multi-class classification performance, even when the underlying architecture remains unchanged. Fourth, relatively simple mitigation methods such as class weighting and weighted sampling can already provide meaningful gains and are more robust than more complex alternatives in this particular setting.
+
+The current study also has some limitations. The Dogs vs.\ Cats analysis is performed on a validation set rather than the hidden test set, because the test labels are unavailable by design. Moreover, the project focuses on a practical ResNet18 pipeline rather than an exhaustive search over larger models, stronger augmentation policies, or more sophisticated long-tail training strategies. These limitations are acceptable in the context of the course project because the primary objective is a defensible and reproducible empirical study rather than leaderboard optimization.
+
+\section{Conclusion}
+This report presented a complete solution to the EE6483 Mini Project Option 2 requirements. On Dogs vs.\ Cats, the best model, pretrained ResNet18 with data augmentation, achieved 98.52\% validation accuracy and produced the required test-set submission file. The comparison against the no-augmentation variant and the custom SmallCNN demonstrates that both data augmentation and transfer learning are important contributors to performance. On CIFAR-10, the balanced baseline reached 91.24\% test accuracy. Under the long-tail setting, both class weighting and weighted sampling achieved 82.67\% test accuracy, while focal loss reached 81.40\%. Overall, the project shows that carefully chosen pretrained CNN baselines, appropriate augmentation, and simple yet principled imbalance handling methods provide a strong and reproducible solution to both the binary and multi-class tasks required by the project.
+
+\section{Reproducibility and File Locations}
+The main output files are located under \texttt{runs/project\_pipeline/}. The most important artifacts are:
+\begin{itemize}
+  \item Dogs vs.\ Cats submission: \path{runs/project_pipeline/submission.csv}
+  \item Validation predictions: \path{runs/project_pipeline/val_predictions.csv}
+  \item Quantitative summary: \path{runs/project_pipeline/report_artifacts/experiment_summary.csv}
+  \item Context summary: \path{runs/project_pipeline/report_artifacts/report_context.json}
+  \item Figures directory: \path{runs/project_pipeline/report_artifacts/figures/}
+\end{itemize}
+
+\begin{thebibliography}{12}
+
+\bibitem{vgg}
+K. Simonyan and A. Zisserman,
+``Very Deep Convolutional Networks for Large-Scale Image Recognition,''
+\textit{arXiv preprint arXiv:1409.1556}, 2014.
+
+\bibitem{resnet}
+K. He, X. Zhang, S. Ren, and J. Sun,
+``Deep Residual Learning for Image Recognition,''
+in \textit{Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition}, 2016.
+
+\bibitem{imagenet}
+J. Deng et al.,
+``ImageNet: A Large-Scale Hierarchical Image Database,''
+in \textit{Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition}, 2009.
+
+\bibitem{efficientnet}
+M. Tan and Q. Le,
+``EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks,''
+in \textit{Proceedings of the International Conference on Machine Learning}, 2019.
+
+\bibitem{vit}
+A. Dosovitskiy et al.,
+``An Image is Worth 16$\times$16 Words: Transformers for Image Recognition at Scale,''
+in \textit{Proceedings of the International Conference on Learning Representations}, 2021.
+
+\bibitem{convnext}
+Z. Liu et al.,
+``A ConvNet for the 2020s,''
+in \textit{Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition}, 2022.
+
+\bibitem{mae}
+K. He et al.,
+``Masked Autoencoders Are Scalable Vision Learners,''
+in \textit{Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition}, 2022.
+
+\bibitem{clip}
+A. Radford et al.,
+``Learning Transferable Visual Models From Natural Language Supervision,''
+in \textit{Proceedings of the International Conference on Machine Learning}, 2021.
+
+\bibitem{focal}
+T.-Y. Lin, P. Goyal, R. Girshick, K. He, and P. Doll\'ar,
+``Focal Loss for Dense Object Detection,''
+in \textit{Proceedings of the IEEE International Conference on Computer Vision}, 2017.
+
+\bibitem{imbalance}
+H. He and E. A. Garcia,
+``Learning from Imbalanced Data,''
+\textit{IEEE Transactions on Knowledge and Data Engineering}, vol. 21, no. 9, pp. 1263--1284, 2009.
+
+\bibitem{cifar}
+A. Krizhevsky,
+``Learning Multiple Layers of Features from Tiny Images,''
+Technical Report, University of Toronto, 2009.
+
+\bibitem{kaggle}
+Kaggle,
+``Dogs vs.\ Cats Competition Dataset,''
+\url{https://www.kaggle.com/c/dogs-vs-cats}.
+
+\end{thebibliography}
+
+\end{document}
