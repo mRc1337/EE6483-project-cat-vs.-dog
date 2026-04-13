@@ -1,13 +1,36 @@
 __pycache__/
 *.pyc
 
-runs/
 datasets.zip
 data/
 datasets/
+EE6483_Project_Report_*
+EE6483-Project2.pdf
 
-*.pt
-*.pth
+runs/*
+!runs/project_pipeline/
+runs/project_pipeline/*
+!runs/project_pipeline/cifar10_baseline/
+!runs/project_pipeline/cifar10_imbalance_class_weight/
+!runs/project_pipeline/cifar10_imbalance_focal_loss/
+!runs/project_pipeline/cifar10_imbalance_weighted_sampler/
+!runs/project_pipeline/dogs_resnet18_pretrained_aug/
+!runs/project_pipeline/dogs_resnet18_pretrained_noaug/
+!runs/project_pipeline/dogs_smallcnn_aug/
+runs/project_pipeline/cifar10_baseline/*
+!runs/project_pipeline/cifar10_baseline/best.pt
+runs/project_pipeline/cifar10_imbalance_class_weight/*
+!runs/project_pipeline/cifar10_imbalance_class_weight/best.pt
+runs/project_pipeline/cifar10_imbalance_focal_loss/*
+!runs/project_pipeline/cifar10_imbalance_focal_loss/best.pt
+runs/project_pipeline/cifar10_imbalance_weighted_sampler/*
+!runs/project_pipeline/cifar10_imbalance_weighted_sampler/best.pt
+runs/project_pipeline/dogs_resnet18_pretrained_aug/*
+!runs/project_pipeline/dogs_resnet18_pretrained_aug/best.pt
+runs/project_pipeline/dogs_resnet18_pretrained_noaug/*
+!runs/project_pipeline/dogs_resnet18_pretrained_noaug/best.pt
+runs/project_pipeline/dogs_smallcnn_aug/*
+!runs/project_pipeline/dogs_smallcnn_aug/best.pt
 
 .venv/
 venv/
